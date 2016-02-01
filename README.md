@@ -74,8 +74,6 @@ You can also use this plugin to validate an array of ID references. Please note 
 runs a single count query to keep the performance impact to a minimum. Hence you will know if there is a
 bad ID value in the array of references but not which one it is.
 
-Please note that refConditions CANNOT be used with an array of ID references, only when referencing a single ID value.
- 
 An example of this is below:
 ```javascript
 var idvalidator = require('mongoose-id-validator');
@@ -123,17 +121,37 @@ Model.plugin(id-validator, {
   * with the relevant schema path that contains an invalid 
   * document ID.
   */
-  message : 'Bad ID value for {PATH}'  
+  message : 'Bad ID value for {PATH}',
+
+  /* Optional mongoose connection object to use if you are
+   * using multiple connections in your application.
+   *
+   * Defaults to built-in mongoose connection if not specified.
+   */
+  connection: myConnection
 });
 ```
 
+You can also instantiate the validator as an object if you wish to control whether it is enabled at runtime, e.g.
+for testing.
+
+```javascript
+var IdValidator = require('mongoose-id-validator').getConstructor;
+
+var validator = new IdValidator();
+schema.plugin(validator.validate.bind(validator));
+
+//Validation active by default. To disable:
+validator.disable();
+
+//Re-enable
+validator.enable();
+```
+
+
 # Tests
 
-To run the tests install mocha
-
-    npm install mocha -g
-
-and then run (with a local MongoDB instance available)
+To run the tests you need a local MongoDB instance available. Run with:
 
     npm test
     
@@ -145,7 +163,7 @@ If you would like to submit a pull request with any changes you make, please fee
     
 # Legal
 
-Code is Copyright (C) Campbell Software Solutions 2014.
+Code is Copyright (C) Campbell Software Solutions 2014 - 2015.
 
 This module is available under terms of the LGPL V3 license. Hence you can use it in other proprietary projects 
 but any changes to the library should be made available.      

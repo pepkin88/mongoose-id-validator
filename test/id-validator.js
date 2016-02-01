@@ -2,10 +2,35 @@ var mongoose = require('mongoose');
 var validator = require('../lib/id-validator');
 var async = require('async');
 var should = require('should');
+var IdValidator = require('../lib/id-validator').getConstructor;
 
 var Schema = mongoose.Schema;
 
-mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/mongoose-id-validator');
+var url = 'mongodb://localhost:27017/mongoose-id-validator';
+if (process.env.MONGO_PORT_27017_TCP_PORT) {
+    url = 'mongodb://' + process.env.MONGO_PORT_27017_TCP_ADDR + ':' + process.env.MONGO_PORT_27017_TCP_PORT + '/mongoose-id-validator';
+}
+var connection2;
+
+function validatorConcept(schema){
+
+    var idvalidator = new IdValidator();
+    schema.plugin(IdValidator.prototype.validate.bind(idvalidator));
+
+    schema.statics.enableValidation = function(){
+        idvalidator.enable();
+    }
+
+    schema.statics.disableValidation = function(){
+        idvalidator.disable();
+    }
+}
+
+
+before(function (done) {
+    mongoose.connect(url, done);
+    connection2 = mongoose.createConnection(url + '2');
+});
 
 describe('mongoose-id-validator Integration Tests', function () {
 
@@ -48,11 +73,30 @@ describe('mongoose-id-validator Integration Tests', function () {
     });
     var Car = mongoose.model('Car', CarSchema);
 
+    var BikeSchema = new Schema({
+        name: String,
+        manufacturer: {
+            type: Schema.Types.ObjectId,
+            ref: 'Manufacturer'
+        },
+        colours: [
+            {
+                type: Schema.Types.ObjectId,
+                ref: 'Colour'
+            }
+        ]
+    });
+
+    validatorConcept(BikeSchema);
+
+    var Bike = mongoose.model('Bike', BikeSchema);
+
     beforeEach(function (done) {
         async.parallel([
             Manufacturer.remove.bind(Manufacturer, {}),
             Colour.remove.bind(Colour, {}),
-            Car.remove.bind(Car, {})
+            Car.remove.bind(Car, {}),
+            Bike.remove.bind(Bike, {})
         ], function (err) {
             if (err) {
                 return done(err);
@@ -62,7 +106,7 @@ describe('mongoose-id-validator Integration Tests', function () {
         });
     });
 
-    it('Should allow null manufacturer/colour IDs as developer can use '
+    it('Should allow no manufacturer/colour IDs as developer can use '
         + 'mongoose required option to make these mandatory', function (done) {
         var c = new Car({
             name: "Test Car"
@@ -70,16 +114,36 @@ describe('mongoose-id-validator Integration Tests', function () {
         c.save(done);
     });
 
-    it('Should fail validation with custom message on bad ID', function (done) {
+    it('Should pass validation with explicit null ID', function (done) {
         var c = new Car({
             name: "Test Car",
-            manufacturer: "50136e40c78c4b9403000001"
+            manufacturer: null
         });
-        c.validate(function (err) {
-            err.name.should.eql('ValidationError');
-            err.errors.manufacturer.message.should.eql('manufacturer ID is bad');
-            done();
+        c.validate(done);
+    });
+
+    it('Should pass validation with explicit undefined ID', function (done) {
+        var c = new Car({
+            name: "Test Car",
+            manufacturer: undefined
         });
+        c.validate(done);
+    });
+
+    it('Should pass validation with explicit null array', function (done) {
+        var c = new Car({
+            name: "Test Car",
+            colours: null
+        });
+        c.save(done);
+    });
+
+    it('Should pass validation with explicit undefined array', function (done) {
+        var c = new Car({
+            name: "Test Car",
+            colours: undefined
+        });
+        c.save(done);
     });
 
     it('Should pass validation with existing ID', function (done) {
@@ -94,6 +158,39 @@ describe('mongoose-id-validator Integration Tests', function () {
             m.save.bind(m),
             c.save.bind(c)
         ], done);
+    });
+
+    it('Should fail validation with custom message on bad ID', function (done) {
+        var c = new Car({
+            name: "Test Car",
+            manufacturer: "50136e40c78c4b9403000001"
+        });
+        c.validate(function (err) {
+            err.name.should.eql('ValidationError');
+            err.errors.manufacturer.message.should.eql('manufacturer ID is bad');
+            done();
+        });
+    });
+
+    it('Should fail validation on bad ID with IdValidator instance', function (done) {
+        var b = new Bike({
+            name: "Test Bike",
+            manufacturer: "50136e40c78c4b9403000001"
+        });
+        b.validate(function (err) {
+            err.name.should.eql('ValidationError');
+            err.errors.manufacturer.message.should.eql('manufacturer references a non existing ID');
+            done();
+        });
+    });
+
+    it('Should ignore validation when it is disabled', function (done) {
+        Bike.disableValidation();
+        var b = new Bike({
+            name: "Test Bike",
+            manufacturer: "50136e40c78c4b9403000001"
+        });
+        b.save(done);
     });
 
     it('Should fail validation if bad ID set after previously good ID value', function (done) {
@@ -200,7 +297,16 @@ describe('mongoose-id-validator Integration Tests', function () {
                 refConditions: {
                     gender: 'm'
                 }
-            }
+            },
+            femaleFriends: [
+                {
+                    type: Schema.Types.ObjectId,
+                    ref: 'Person',
+                    refConditions: {
+                        gender: 'f'
+                    }
+                }
+            ]
         });
         InfoSchema.plugin(validator);
         var Info = mongoose.model('Info', InfoSchema);
@@ -238,22 +344,132 @@ describe('mongoose-id-validator Integration Tests', function () {
             i.validate(done);
         });
 
-        it('Should throw error if declaring refConditions on array of ID references', function () {
-            var BadSchema = new Schema({
-                femaleFriends: [
-                    {
-                        type: Schema.Types.ObjectId,
-                        ref: 'Person',
-                        refConditions: {
-                            gender: 'f'
-                        }
-                    }
-                ]
+        it('Should not validate array of ID values containing value that exists but does not match conditions', function (done) {
+            var i = new Info({femaleFriends: [jill, jack]});
+            i.validate(function (err) {
+                err.should.property('name', 'ValidationError');
+                err.errors.should.property('femaleFriends');
+                done();
             });
-            (function () {
-                BadSchema.plugin(validator)
-            }).should.throw('Cannot declare refConditions on array of ID references');
         })
 
+    });
+
+    describe('Recursion Tests', function () {
+        var contactSchema = new mongoose.Schema({});
+        var listSchema = new mongoose.Schema({
+            name: String,
+            contacts: [{
+                reason: String,
+                contactId: {
+                    type: Schema.Types.ObjectId,
+                    ref: 'Contact'
+                }
+            }]
+        });
+        listSchema.plugin(validator);
+
+        var Contact = mongoose.model('Contact', contactSchema);
+        var List = mongoose.model('List', listSchema);
+
+        it('Should allow empty array', function (done) {
+            var obj = new List({name: 'Test', contacts: []});
+            obj.validate(done);
+        });
+
+        it('Should fail on invalid ID inside sub-schema', function (done) {
+            var obj = new List({
+                name: 'Test', contacts: [
+                    {reason: 'My friend', contactId: '50136e40c78c4b9403000001'}
+                ]
+            });
+            obj.validate(function (err) {
+                err.should.property('name', 'ValidationError');
+                err.errors.should.property('contacts.0.contactId');
+                done();
+            });
+        });
+
+        it('Should pass on valid ID in sub-schema', function (done) {
+            var c = new Contact({});
+            async.series([
+                function (cb) {
+                    c.save(cb);
+                },
+                function (cb) {
+                    var obj = new List({
+                        name: 'Test', contacts: [
+                            {reason: 'My friend', contactId: c}
+                        ]
+                    });
+                    obj.validate(cb);
+                }
+            ], done);
+        });
+    });
+
+    describe('Connection tests', function () {
+        it('Correct connection should be used when specified as option', function (done) {
+            var UserSchema = new Schema({
+                name: String
+            });
+            var User1 = mongoose.model('User', UserSchema);
+            var User2 = connection2.model('User', UserSchema);
+
+            var ItemSchema1 = new Schema({
+                owner: {
+                    type: Schema.Types.ObjectId,
+                    ref: 'User'
+                }
+            });
+            ItemSchema1.plugin(validator);
+            var ItemSchema2 = new Schema({
+                owner: {
+                    type: Schema.Types.ObjectId,
+                    ref: 'User'
+                }
+            });
+            ItemSchema2.plugin(validator, {
+                connection: connection2
+            });
+            var Item1 = mongoose.model('Item', ItemSchema1);
+            var Item2 = connection2.model('Item', ItemSchema2);
+
+            var u1 = new User1({_id: '50136e40c78c4b9403000001'});
+            var u2 = new User2({_id: '50136e40c78c4b9403000002'});
+            var i1 = new Item1({owner: '50136e40c78c4b9403000001'});
+            var i2 = new Item2({owner: '50136e40c78c4b9403000002'});
+            var bad1 = new Item1({owner: '50136e40c78c4b9403000002'});
+            var bad2 = new Item2({owner: '50136e40c78c4b9403000001'});
+
+            async.series([
+                function (cb) {
+                    async.parallel(mongoose.connections.map(function (c) {
+                        return c.db.dropDatabase.bind(c.db);
+                    }), cb);
+                },
+                function (cb) {
+                    async.series([u1, u2, i1, i2].map(function (o) {
+                        return o.save.bind(o);
+                    }), cb);
+                },
+                function (cb) {
+                    bad1.validate(function (err) {
+                        should(!!err).eql(true);
+                        err.should.property('name', 'ValidationError');
+                        err.errors.should.property('owner');
+                        cb();
+                    });
+                },
+                function (cb) {
+                    bad2.validate(function (err) {
+                        should(!!err).eql(true);
+                        err.should.property('name', 'ValidationError');
+                        err.errors.should.property('owner');
+                        cb();
+                    });
+                }
+            ], done);
+        });
     });
 });
