@@ -67,6 +67,24 @@ var OtherSchema = new Schema({
 });
 ```
 
+Values of refConditions can also be functions. With this you can dynamically set refConditions.
+These functions have access to the context of the schema instance. An example:
+
+```javascript
+var OtherSchema = new Schema({
+  refFieldMustBeTrue: true,
+  referencedId : {
+  					type: Schema.Types.ObjectId,
+  					ref: 'RefSchema',
+  					refConditions: {
+  					  field1: function () {
+						return this.refFieldMustBeTrue
+					  }
+  					}
+  				  }
+});
+```
+
 The referenceId value in the code above would only pass validation if the object with this ID exists AND had a property 
 'field1' that has the value 123. If any conditional property does not match then it would not pass validation.
 
@@ -129,6 +147,16 @@ Model.plugin(id-validator, {
    * Defaults to built-in mongoose connection if not specified.
    */
   connection: myConnection
+  
+  /* Applies to validation of arrays of ID references only. Set
+   * to true if you sometimes have the same object ID reference
+   * repeated in an array. If set, the validator will use the
+   * total of unique ID references instead of total number of array
+   * entries when checking the database.
+   *
+   * Defaults to false
+   */
+  allowDuplicates: true
 });
 ```
 
@@ -163,7 +191,7 @@ If you would like to submit a pull request with any changes you make, please fee
     
 # Legal
 
-Code is Copyright (C) Campbell Software Solutions 2014 - 2015.
+Code is Copyright (C) Campbell Software Solutions 2014 - 2017.
 
 This module is available under terms of the LGPL V3 license. Hence you can use it in other proprietary projects 
 but any changes to the library should be made available.      
